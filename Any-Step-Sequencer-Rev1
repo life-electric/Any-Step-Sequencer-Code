@@ -1,0 +1,194 @@
+// Any Step sequencer
+// Written to use ISRs for  external clocking
+// Freddie Renyard, 2020
+
+// Hardware configuration. Enter whichever digital pins that you want the sequence to be written to, in step order, 
+// in the array below! E.g. Here, I am making an 8 step sequence starting on pin 3 and ending on pin 10
+// This code could be rewritten to use shift registers for some very, very long sequences...
+
+byte steps[] = {3,4,5,6,7,8,9,10};
+
+//This is your analog in pin, but you can make this whatever you like!
+#define BUTTON2 A0
+
+// The pin that the trigger will be on. Attach an LED to ground through a resistor
+// to see it!
+#define GATE_OUT 12
+
+// True = internally clocked; false = externally clocked. You could toggle this with a button/switched jack
+bool clockMode = true;
+
+// Defining all the necessary parameters for the sequencer code. 
+
+int delayTime = 100;
+int masterClock = 0;
+byte stepIndex1 = 1;
+bool stepForward = false;
+byte stepNumber = 0;
+
+void setup() {
+
+  // Goes through each pin of the sequence and sets it as an output.
+  
+  for(int i = 0; i < sizeof(steps); i++){
+     pinMode(steps[i], OUTPUT);
+  }
+
+  pinMode(GATE_OUT, OUTPUT);
+
+  pinMode(BUTTON2, INPUT);
+
+  // This is where it gets different...
+  // The rate at which the sequencer progresses is determined by an ISR, which are lines of code that
+  // you specify, that are executed when a certain event happens. This is either a) the voltage going high
+  // on one of the pins (for when you want external clocking) or by an internal clock (for when you want it to
+  // clock by itself with a potentiometer). The method of generating this internal clock is via the Arduino's timers,
+  // which is a topic that can get complex quickly...I learnt it off these two articles: 
+  // https://makezine.com/projects/make-35/advanced-arduino-sound-synthesis/ read this first!
+  // https://www.robotshop.com/community/forum/t/arduino-101-timers-and-interrupts/13072
+  // which I would definitely recommend reading as they can be used to do all sorts of musical
+  // things with arduinos!
+
+  // Set up the ISR to be called at an appropriate rate
+   
+  noInterrupts();
+
+    TCCR1A = 0;
+  
+    TCCR1B = 0;
+  
+    TCNT1  = 0;
+  
+    OCR1A = 30000;           
+  
+    TCCR1B |= (1 << WGM12);   
+  
+    TCCR1B |= (1 << CS10);    
+    TCCR1B |= (1 << CS12);    
+  
+    TIMSK1 |= (1 << OCIE1A); 
+  
+  interrupts();
+
+  // Attach the interrupt to a pin to allow for external clocking
+  attachInterrupt(digitalPinToInterrupt(2), advanceClock, RISING);
+  
+}
+
+void loop() {
+  
+  // Checks whether the sequence should step forward.
+  if(stepForward == true){
+
+    advanceSeq();
+    
+  }
+
+  // The code then checks for each step number, and changes the
+  // pin that is on if needed. 
+  // I have put it in a function to tidy things up and to make it easier to implement going
+  // random, etc.!
+
+  // I have implemented forward and backwards. These could be switched with a button!
+  
+  forward();
+  //backwards();
+  
+}
+
+
+// The interrupt! This is the code that will be called when the timer calls it
+
+ISR(TIMER1_COMPA_vect) {
+
+  // This will only increment the clock if the clockMode is true.
+  // If it is on when it is being clocked externally both clocks will increment the timer!
+  
+  if(clockMode == true){
+    masterClock++;
+    stepForward = true;
+  }
+  
+}
+
+// The code below it is just a copy that is attached to the interrupt in the setup section.
+// This will execute when the external pin goes high!
+
+void advanceClock(){
+
+  if(clockMode == false){
+    masterClock++;
+    stepForward = true;
+  }
+}
+
+void advanceSeq(){
+
+  // This is the line of code that determines the tempo. If you want to know more about what OCR1A
+  // means/does, have a look at the articles above as the Makezine one explains it really well!
+  // You can change the last two values below to get different ranges of clock speed on the potentiometer
+  OCR1A = map(analogRead(BUTTON2), 0, 1023, 300, 20000); 
+
+  // Move onto the next step of the sequence...
+  stepNumber++;
+
+  // If the step is higher than 15, set it to zero
+  // The step number counts from zero (i.e. is zero indexed) so a stepNumber of 0 = STEP1, etc etc
+  if(stepNumber > sizeof(steps)-1){
+      stepNumber = 0;
+    }
+
+  // Pulse the gate so that you can control other analog hardware
+  pulseGate();
+
+  // You've stepped forward, so this prevents another step from happening until the interrupt is 
+  // called again.
+  stepForward = false;
+  
+}
+
+void forward(){
+
+  if(stepNumber == 0){
+      digitalWrite(steps[sizeof(steps)-1], LOW);
+      digitalWrite(steps[0], HIGH);
+      
+      
+  }
+  
+  for(int i = 1; i < sizeof(steps); i++){
+     
+     if(stepNumber == i){
+        digitalWrite(steps[i-1], LOW);
+        digitalWrite(steps[i], HIGH);
+        
+     }
+  }
+}
+
+void backwards(){
+
+  if(stepNumber == 0){
+      digitalWrite(steps[0], LOW);
+      digitalWrite(steps[sizeof(steps)-1], HIGH);
+  }
+
+  for(int i = 1; i < sizeof(steps); i++){
+     
+     if(stepNumber == i){
+        digitalWrite(steps[sizeof(steps)-i], LOW);
+        digitalWrite(steps[sizeof(steps)-i-1], HIGH);
+        
+     }
+  }
+}
+
+void pulseGate(){
+
+   //Delay here just determines how long the trigger is. change it to whatever you want!
+   //NB if the delay is too high the sequencer will stop clocking as you speed it up
+   // as delay simply stops code executing for a certain amount of time that you specify
+   digitalWrite(GATE_OUT, HIGH);
+   delay(1);
+   digitalWrite(GATE_OUT, LOW);
+}
